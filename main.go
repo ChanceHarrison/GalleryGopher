@@ -1,10 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand"
 	"os"
 	"os/signal"
 	"time"
@@ -15,14 +15,28 @@ import (
 )
 
 var (
-	log      zerolog.Logger
-	s        *discordgo.Session
-	botToken string
-	guildId  string
+	log       zerolog.Logger
+	s         *discordgo.Session
+	botToken  string
+	guildId   string
+	galleries map[string][]string
 )
 
-// init initializes logging for the program
-// init first creates a (pretty-print ConsoleWriter) logger that writes to stdout to be used for logging events that occur while configuring the final logger. Configuring the final logger entails creating a file with name logName in directory logDir. Directory logDir is created if necessary and its permissions are set. If this all succeeds, init creates a logger based on a zerolog.MultiLevelWriter that is configured to log to stdout (as pretty-print) and to the aforementioned file (as JSON).
+// Initialize test "database"
+func init() {
+	galleries = make(map[string][]string)
+	galleries["cheems"] = append(galleries["cheems"], "https://media.discordapp.net/attachments/621023220249657345/867856538798784563/image0.jpg")
+	galleries["cheems"] = append(galleries["cheems"], "https://media.discordapp.net/attachments/879104636093624351/881341291156365353/image0.jpg")
+	galleries["molotov"] = append(galleries["molotov"], "https://media.discordapp.net/attachments/621023220249657345/880952883426758696/20210817_181220.jpg")
+}
+
+// Initialize rand (with current time)
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+// Initialize logging
+// It first creates a (pretty-print ConsoleWriter) logger that writes to stdout to be used for logging events that occur while configuring the final logger. Configuring the final logger entails creating a file with name logName in directory logDir. Directory logDir is created if necessary and its permissions are set. If this all succeeds, init creates a logger based on a zerolog.MultiLevelWriter that is configured to log to stdout (as pretty-print) and to the aforementioned file (as JSON).
 func init() {
 	logDir := "log"
 	logName := "log-" + fmt.Sprint(time.Now().Unix())
@@ -73,6 +87,7 @@ func init() {
 	log.Debug().Msgf("Logger now writing to both standard out and '%s'", logPath) // Logs to console and file
 }
 
+// Initalize environment
 func init() {
 	var err error
 	var is_present bool
@@ -106,10 +121,80 @@ func init() {
 	}
 }
 
+func populateGalleryChoices() (options []*discordgo.ApplicationCommandOptionChoice) {
+	for k := range galleries {
+		options = append(options,
+			&discordgo.ApplicationCommandOptionChoice{
+				Name:  k,
+				Value: k,
+			},
+		)
+	}
+	return options
+}
+
+func doesGalleryExist(gallery_name string) (exists bool) {
+	_, exists = galleries[gallery_name]
+	return
+}
+
+func getRandomImageFromGallery(i *discordgo.Interaction, gallery_name string) (content_value string) {
+	exists := doesGalleryExist(gallery_name)
+	if exists {
+		length := len(galleries[gallery_name])
+		if length > 0 {
+			images := galleries[gallery_name]
+			numberOfImages := len(images)
+			if numberOfImages == 1 {
+				content_value = images[0]
+			} else {
+				chosenImageInt := rand.Intn(numberOfImages)
+				content_value = images[chosenImageInt]
+			}
+		} else {
+			content_value = "Gallery is empty :stop_sign:"
+			log.Debug().Interface("interaction", i).Msg("Attempted image retrieval from empty gallery")
+		}
+	} else {
+		content_value = "Gallery does not exist :stop_sign:"
+		log.Warn().Interface("interaction", i).Msg("Attempted image retrieval from non-existent gallery")
+	}
+	return content_value
+}
+
+func getImageFromGallery(i *discordgo.Interaction, gallery_name string, image_num int) (content_value string) {
+	exists := doesGalleryExist(gallery_name)
+	if exists {
+		length := len(galleries[gallery_name])
+		if length > 0 {
+			images := galleries[gallery_name]
+			numberOfImages := len(images)
+			if image_num < 0 || image_num >= numberOfImages {
+				content_value = fmt.Sprintf("Invalid image number (should be between 0 and %d)", numberOfImages-1)
+			} else {
+				content_value = images[image_num]
+			}
+		} else {
+			content_value = "Gallery is empty :stop_sign:"
+			log.Debug().Interface("interaction", i).Msg("Attempted image retrieval from empty gallery")
+		}
+	} else {
+		content_value = "Gallery does not exist :stop_sign:"
+		log.Warn().Interface("interaction", i).Msg("Attempted image retrieval from non-existent gallery")
+	}
+	return content_value
+}
+
+/*
+func createGallery(i *discordgo.Interaction, gallery_name string) (content_value string) {
+
+}
+*/
+
 var (
 	commands = []*discordgo.ApplicationCommand{
 		{
-			Name:        "img",
+			Name:        "gallery",
 			Description: "Server-wide image gallery",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
@@ -118,24 +203,65 @@ var (
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "gallery",
+							Name:        "gallery_name",
 							Description: "The gallery to choose from",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
-							Choices: []*discordgo.ApplicationCommandOptionChoice{
-								{
-									Name:  "cheems",
-									Value: "cheems",
-								},
-							},
 						},
 					},
 				},
+				{
+					Name:        "pick",
+					Description: "Send the specified image from the chosen gallery",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Name:        "gallery_name",
+							Description: "The gallery to choose from",
+							Type:        discordgo.ApplicationCommandOptionString,
+							Required:    true,
+						},
+						{
+							Name:        "image_number",
+							Description: "The image you wish to choose",
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Required:    true,
+						},
+					},
+				},
+				/* {
+					Name:        "create",
+					Description: "Create a new gallery",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Name:        "gallery_name",
+							Description: "The name of the gallery to be created",
+							Type:        discordgo.ApplicationCommandOptionString,
+							Required:    true,
+						},
+					},
+				},
+				{
+					Name:        "remove",
+					Description: "Remove an existing gallery",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Name:        "gallery_name",
+							Description: "The name of the gallery to be removed",
+							Type:        discordgo.ApplicationCommandOptionString,
+							Required:    true,
+							Choices:     populateGalleryChoices(),
+						},
+					},
+				}, */
 			},
 		},
 	}
+
 	commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
-		"img": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		"gallery": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			content := ""
 
 			switch i.Type {
@@ -144,22 +270,22 @@ var (
 
 				switch command.Name {
 				case "random":
-					option := command.Options[0]
-
-					switch option.Value {
-					case "cheems":
-						content = "https://media.discordapp.net/attachments/621023220249657345/867856538798784563/image0.jpg"
-					default:
-						content = "Invalid gallery :stop_sign:\nHow did this happen?"
-						logInteractionIssue(i.Interaction, "invalid gallery")
-					}
+					gallery_name := command.Options[0].StringValue()
+					content = getRandomImageFromGallery(i.Interaction, gallery_name)
+				case "pick":
+					gallery_name := command.Options[0].StringValue()
+					image_num := int(command.Options[1].IntValue())
+					content = getImageFromGallery(i.Interaction, gallery_name, image_num)
+				/* case "create":
+				gallery_name := command.Options[0].StringValue()
+				content = createGallery(i.Interaction, gallery_name) */
 				default:
-					content = "Invalid subcommand :stop_sign:\nHow did this happen?"
-					logInteractionIssue(i.Interaction, "invalid subcommand")
+					content = "Invalid subcommand :stop_sign:"
+					log.Warn().Interface("interaction", i.Interaction).Msg("Non-existent subcommand invoked")
 				}
 			default:
 				content = "I didn't expect to be interacted with in this way :flushed:\nPerhaps someone should look into this :thinking:"
-				logInteractionIssue(i.Interaction, "unexpected interaction type")
+				log.Warn().Interface("interaction", i.Interaction).Msg("Unexpected interaction type")
 			}
 
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -171,25 +297,6 @@ var (
 		},
 	}
 )
-
-func logInteractionIssue(i *discordgo.Interaction, description string) {
-	log.Warn().Msgf("Interaction issue: '%s'", description)
-	var err error
-	var interactionJsonBytes []byte
-	var interactionDataJsonBytes []byte
-
-	interactionJsonBytes, err = json.Marshal(i)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to marshal interaction object")
-	}
-
-	interactionDataJsonBytes, err = json.Marshal(i.Data)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to marshal interaction data object")
-	}
-
-	log.Warn().RawJSON("interaction", interactionJsonBytes).RawJSON("interaction_data", interactionDataJsonBytes).Msg("")
-}
 
 func init() {
 	s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -208,10 +315,15 @@ func main() {
 		log.Fatal().Err(err).Msg("Cannot open the session")
 	}
 
+	commands[0].Options[0].Options[0].Choices = populateGalleryChoices() // gallery.random.gallery_name.Choices
+	commands[0].Options[1].Options[0].Choices = populateGalleryChoices() // gallery.pick.gallery_name.Choices
+
 	for _, v := range commands {
-		_, err := s.ApplicationCommandCreate(s.State.User.ID, guildId, v)
+		cmd, err := s.ApplicationCommandCreate(s.State.User.ID, guildId, v)
 		if err != nil {
 			log.Panic().Err(err).Msgf("Cannot create '%s' command", v.Name)
+		} else {
+			log.Debug().Interface("command_object", cmd).Msg("Successfully created command")
 		}
 	}
 
