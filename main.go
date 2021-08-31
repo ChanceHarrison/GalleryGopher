@@ -153,7 +153,7 @@ func getRandomImageFromGallery(i *discordgo.Interaction, gallery_name string) (c
 			}
 		} else {
 			contentValue = "Gallery is empty :stop_sign:"
-			log.Debug().Interface("interaction", i).Msg("Attempted image retrieval from empty gallery")
+			log.Debug().Msg("Attempted image retrieval from empty gallery")
 		}
 	} else {
 		contentValue = "Gallery does not exist :stop_sign:"
@@ -170,13 +170,17 @@ func getImageFromGallery(i *discordgo.Interaction, galleryName string, imageNum 
 			images := galleries[galleryName]
 			numberOfImages := len(images)
 			if imageNum < 0 || imageNum >= numberOfImages {
-				contentValue = fmt.Sprintf("Invalid image number (should be between 0 and %d)", numberOfImages-1)
+				if numberOfImages == 1 {
+					contentValue = "Invalid image number :stop_sign: (Only image number 0 is valid. Perhaps add more images to the gallery?)"
+				} else {
+					contentValue = fmt.Sprintf("Invalid image number :stop_sign: (Valid image numbers include 0 through %d inclusive.)", numberOfImages-1)
+				}
 			} else {
 				contentValue = images[imageNum]
 			}
 		} else {
 			contentValue = "Gallery is empty :stop_sign:"
-			log.Debug().Interface("interaction", i).Msg("Attempted image retrieval from empty gallery")
+			log.Debug().Msg("Attempted image retrieval from empty gallery")
 		}
 	} else {
 		contentValue = "Gallery does not exist :stop_sign:"
@@ -185,11 +189,47 @@ func getImageFromGallery(i *discordgo.Interaction, galleryName string, imageNum 
 	return contentValue
 }
 
-/*
 func createGallery(i *discordgo.Interaction, galleryName string) (contentValue string) {
-
+	exists := doesGalleryExist(galleryName)
+	if exists {
+		contentValue = "Gallery already exists :stop_sign:"
+		log.Debug().Msg("Attempted to create a gallery that already exists")
+	} else {
+		galleries[galleryName] = nil
+		contentValue = fmt.Sprintf("Gallery '%s' created :white_check_mark:", galleryName)
+		log.Debug().Msgf("Created new gallery '%s'", galleryName)
+	}
+	return contentValue
 }
-*/
+
+func removeGallery(i *discordgo.Interaction, galleryName string) (contentValue string) {
+	exists := doesGalleryExist(galleryName)
+	if !exists {
+		contentValue = "Gallery does not exist :stop_sign:"
+		log.Warn().Msg("Attempted to remove non-existent gallery")
+	} else {
+		delete(galleries, galleryName)
+		contentValue = fmt.Sprintf("Gallery '%s' removed :white_check_mark:", galleryName)
+		log.Debug().Msgf("Removed gallery '%s", galleryName)
+	}
+	return contentValue
+}
+
+func updateCommands() {
+	commands[0].Options[0].Options[0].Choices = populateGalleryChoices() // gallery.random.galleryName.Choices
+	commands[0].Options[1].Options[0].Choices = populateGalleryChoices() // gallery.pick.galleryName.Choices
+	commands[0].Options[3].Options[0].Choices = populateGalleryChoices() // gallery.remove.galleryName.Choices
+
+	for _, v := range commands {
+		// log.Debug().Interface("cmd", v).Msg("Attempting to create command")
+		cmd, err := s.ApplicationCommandCreate(s.State.User.ID, guildId, v)
+		if err != nil {
+			log.Error().Err(err).Msgf("Cannot (re?)create '%s' command", v.Name)
+		} else {
+			log.Debug().Msgf("Successfully (re?)created '%s' command", cmd.Name)
+		}
+	}
+}
 
 var (
 	commands = []*discordgo.ApplicationCommand{
@@ -203,7 +243,7 @@ var (
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "galleryName",
+							Name:        "gallery_name",
 							Description: "The gallery to choose from",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
@@ -216,26 +256,26 @@ var (
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "galleryName",
+							Name:        "gallery_name",
 							Description: "The gallery to choose from",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
 						},
 						{
-							Name:        "imageNumber",
+							Name:        "image_number",
 							Description: "The image you wish to choose",
 							Type:        discordgo.ApplicationCommandOptionInteger,
 							Required:    true,
 						},
 					},
 				},
-				/* {
+				{
 					Name:        "create",
 					Description: "Create a new gallery",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "galleryName",
+							Name:        "gallery_name",
 							Description: "The name of the gallery to be created",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
@@ -248,14 +288,13 @@ var (
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "galleryName",
+							Name:        "gallery_name",
 							Description: "The name of the gallery to be removed",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
-							Choices:     populateGalleryChoices(),
 						},
 					},
-				}, */
+				},
 			},
 		},
 	}
@@ -276,9 +315,14 @@ var (
 					galleryName := command.Options[0].StringValue()
 					imageNum := int(command.Options[1].IntValue())
 					content = getImageFromGallery(i.Interaction, galleryName, imageNum)
-				/* case "create":
-				galleryName := command.Options[0].StringValue()
-				content = createGallery(i.Interaction, galleryName) */
+				case "create":
+					galleryName := command.Options[0].StringValue()
+					content = createGallery(i.Interaction, galleryName)
+					updateCommands() // Adding/removing galleries has side-effects for the pre-populated galleryName choices
+				case "remove":
+					galleryName := command.Options[0].StringValue()
+					content = removeGallery(i.Interaction, galleryName)
+					updateCommands()
 				default:
 					content = "Invalid subcommand :stop_sign:"
 					log.Warn().Interface("interaction", i.Interaction).Msg("Non-existent subcommand invoked")
@@ -315,17 +359,7 @@ func main() {
 		log.Fatal().Err(err).Msg("Cannot open the session")
 	}
 
-	commands[0].Options[0].Options[0].Choices = populateGalleryChoices() // gallery.random.galleryName.Choices
-	commands[0].Options[1].Options[0].Choices = populateGalleryChoices() // gallery.pick.galleryName.Choices
-
-	for _, v := range commands {
-		cmd, err := s.ApplicationCommandCreate(s.State.User.ID, guildId, v)
-		if err != nil {
-			log.Panic().Err(err).Msgf("Cannot create '%s' command", v.Name)
-		} else {
-			log.Debug().Interface("command_object", cmd).Msg("Successfully created command")
-		}
-	}
+	updateCommands()
 
 	defer s.Close()
 
