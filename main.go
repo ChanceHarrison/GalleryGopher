@@ -90,7 +90,7 @@ func init() {
 // Initalize environment
 func init() {
 	var err error
-	var is_present bool
+	var isPresent bool
 
 	err = godotenv.Load()
 	if err != nil {
@@ -99,16 +99,16 @@ func init() {
 		log.Info().Msg("Loaded environment values from file")
 	}
 
-	botToken, is_present = os.LookupEnv("botToken")
-	if !is_present {
+	botToken, isPresent = os.LookupEnv("botToken")
+	if !isPresent {
 		log.Fatal().Msg("botToken environment value not found")
 	}
 	if len(botToken) == 0 {
 		log.Fatal().Msg("The length of the botToken environment variable is zero")
 	}
 
-	guildId, is_present = os.LookupEnv("guildId")
-	if !is_present {
+	guildId, isPresent = os.LookupEnv("guildId")
+	if !isPresent {
 		log.Fatal().Msg("guildId environment value not found")
 	}
 	if len(botToken) == 0 {
@@ -133,12 +133,12 @@ func populateGalleryChoices() (options []*discordgo.ApplicationCommandOptionChoi
 	return options
 }
 
-func doesGalleryExist(gallery_name string) (exists bool) {
-	_, exists = galleries[gallery_name]
+func doesGalleryExist(galleryName string) (exists bool) {
+	_, exists = galleries[galleryName]
 	return
 }
 
-func getRandomImageFromGallery(i *discordgo.Interaction, gallery_name string) (content_value string) {
+func getRandomImageFromGallery(i *discordgo.Interaction, gallery_name string) (contentValue string) {
 	exists := doesGalleryExist(gallery_name)
 	if exists {
 		length := len(galleries[gallery_name])
@@ -146,47 +146,47 @@ func getRandomImageFromGallery(i *discordgo.Interaction, gallery_name string) (c
 			images := galleries[gallery_name]
 			numberOfImages := len(images)
 			if numberOfImages == 1 {
-				content_value = images[0]
+				contentValue = images[0]
 			} else {
 				chosenImageInt := rand.Intn(numberOfImages)
-				content_value = images[chosenImageInt]
+				contentValue = images[chosenImageInt]
 			}
 		} else {
-			content_value = "Gallery is empty :stop_sign:"
+			contentValue = "Gallery is empty :stop_sign:"
 			log.Debug().Interface("interaction", i).Msg("Attempted image retrieval from empty gallery")
 		}
 	} else {
-		content_value = "Gallery does not exist :stop_sign:"
+		contentValue = "Gallery does not exist :stop_sign:"
 		log.Warn().Interface("interaction", i).Msg("Attempted image retrieval from non-existent gallery")
 	}
-	return content_value
+	return contentValue
 }
 
-func getImageFromGallery(i *discordgo.Interaction, gallery_name string, image_num int) (content_value string) {
-	exists := doesGalleryExist(gallery_name)
+func getImageFromGallery(i *discordgo.Interaction, galleryName string, imageNum int) (contentValue string) {
+	exists := doesGalleryExist(galleryName)
 	if exists {
-		length := len(galleries[gallery_name])
+		length := len(galleries[galleryName])
 		if length > 0 {
-			images := galleries[gallery_name]
+			images := galleries[galleryName]
 			numberOfImages := len(images)
-			if image_num < 0 || image_num >= numberOfImages {
-				content_value = fmt.Sprintf("Invalid image number (should be between 0 and %d)", numberOfImages-1)
+			if imageNum < 0 || imageNum >= numberOfImages {
+				contentValue = fmt.Sprintf("Invalid image number (should be between 0 and %d)", numberOfImages-1)
 			} else {
-				content_value = images[image_num]
+				contentValue = images[imageNum]
 			}
 		} else {
-			content_value = "Gallery is empty :stop_sign:"
+			contentValue = "Gallery is empty :stop_sign:"
 			log.Debug().Interface("interaction", i).Msg("Attempted image retrieval from empty gallery")
 		}
 	} else {
-		content_value = "Gallery does not exist :stop_sign:"
+		contentValue = "Gallery does not exist :stop_sign:"
 		log.Warn().Interface("interaction", i).Msg("Attempted image retrieval from non-existent gallery")
 	}
-	return content_value
+	return contentValue
 }
 
 /*
-func createGallery(i *discordgo.Interaction, gallery_name string) (content_value string) {
+func createGallery(i *discordgo.Interaction, galleryName string) (contentValue string) {
 
 }
 */
@@ -203,7 +203,7 @@ var (
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "gallery_name",
+							Name:        "galleryName",
 							Description: "The gallery to choose from",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
@@ -216,13 +216,13 @@ var (
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "gallery_name",
+							Name:        "galleryName",
 							Description: "The gallery to choose from",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
 						},
 						{
-							Name:        "image_number",
+							Name:        "imageNumber",
 							Description: "The image you wish to choose",
 							Type:        discordgo.ApplicationCommandOptionInteger,
 							Required:    true,
@@ -235,7 +235,7 @@ var (
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "gallery_name",
+							Name:        "galleryName",
 							Description: "The name of the gallery to be created",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
@@ -248,7 +248,7 @@ var (
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
-							Name:        "gallery_name",
+							Name:        "galleryName",
 							Description: "The name of the gallery to be removed",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
@@ -270,15 +270,15 @@ var (
 
 				switch command.Name {
 				case "random":
-					gallery_name := command.Options[0].StringValue()
-					content = getRandomImageFromGallery(i.Interaction, gallery_name)
+					galleryName := command.Options[0].StringValue()
+					content = getRandomImageFromGallery(i.Interaction, galleryName)
 				case "pick":
-					gallery_name := command.Options[0].StringValue()
-					image_num := int(command.Options[1].IntValue())
-					content = getImageFromGallery(i.Interaction, gallery_name, image_num)
+					galleryName := command.Options[0].StringValue()
+					imageNum := int(command.Options[1].IntValue())
+					content = getImageFromGallery(i.Interaction, galleryName, imageNum)
 				/* case "create":
-				gallery_name := command.Options[0].StringValue()
-				content = createGallery(i.Interaction, gallery_name) */
+				galleryName := command.Options[0].StringValue()
+				content = createGallery(i.Interaction, galleryName) */
 				default:
 					content = "Invalid subcommand :stop_sign:"
 					log.Warn().Interface("interaction", i.Interaction).Msg("Non-existent subcommand invoked")
@@ -315,8 +315,8 @@ func main() {
 		log.Fatal().Err(err).Msg("Cannot open the session")
 	}
 
-	commands[0].Options[0].Options[0].Choices = populateGalleryChoices() // gallery.random.gallery_name.Choices
-	commands[0].Options[1].Options[0].Choices = populateGalleryChoices() // gallery.pick.gallery_name.Choices
+	commands[0].Options[0].Options[0].Choices = populateGalleryChoices() // gallery.random.galleryName.Choices
+	commands[0].Options[1].Options[0].Choices = populateGalleryChoices() // gallery.pick.galleryName.Choices
 
 	for _, v := range commands {
 		cmd, err := s.ApplicationCommandCreate(s.State.User.ID, guildId, v)
