@@ -15,10 +15,12 @@ import (
 )
 
 var (
-	log       zerolog.Logger
-	s         *discordgo.Session
-	botToken  string
-	guildId   string
+	log    zerolog.Logger
+	s      *discordgo.Session
+	config = map[string]string{
+		"botToken": "",
+		"guildId":  "",
+	}
 	galleries map[string][]string
 )
 
@@ -99,23 +101,18 @@ func init() {
 		log.Info().Msg("Loaded environment values from file")
 	}
 
-	botToken, isPresent = os.LookupEnv("botToken")
-	if !isPresent {
-		log.Fatal().Msg("botToken environment value not found")
-	}
-	if len(botToken) == 0 {
-		log.Fatal().Msg("The length of the botToken environment variable is zero")
-	}
-
-	guildId, isPresent = os.LookupEnv("guildId")
-	if !isPresent {
-		log.Fatal().Msg("guildId environment value not found")
-	}
-	if len(botToken) == 0 {
-		log.Fatal().Msg("The length of the guildId environment variable is zero")
+	for key, val := range config {
+		val, isPresent = os.LookupEnv(key)
+		if !isPresent {
+			log.Fatal().Msgf("Environment value '%s' is missing", key)
+		}
+		if len(val) == 0 {
+			log.Fatal().Msgf("Environment value '%s' is present but empty", key)
+		}
+		config[key] = val
 	}
 
-	s, err = discordgo.New("Bot " + botToken)
+	s, err = discordgo.New("Bot " + config["botToken"])
 	if err != nil {
 		log.Fatal().Err(err).Msg("Invalid bot parameters")
 	}
@@ -222,7 +219,7 @@ func updateCommands() {
 
 	for _, v := range commands {
 		// log.Debug().Interface("cmd", v).Msg("Attempting to create command")
-		cmd, err := s.ApplicationCommandCreate(s.State.User.ID, guildId, v)
+		cmd, err := s.ApplicationCommandCreate(s.State.User.ID, config["guildId"], v)
 		if err != nil {
 			log.Error().Err(err).Msgf("Cannot (re?)create '%s' command", v.Name)
 		} else {
