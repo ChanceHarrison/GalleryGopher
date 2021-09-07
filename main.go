@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,27 +10,30 @@ import (
 	"os/signal"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
-	log    zerolog.Logger
-	s      *discordgo.Session
-	config = map[string]string{
-		"botToken": "",
-		"guildId":  "",
+	log             zerolog.Logger
+	s               *discordgo.Session
+	firestoreClient *firestore.Client
+	ctx             = context.Background()
+	config          = map[string]string{
+		"botToken":                         "",
+		"guildId":                          "",
+		"googleApplicationCredentialsPath": "",
+		"projectId":                        "",
 	}
-	galleries map[string][]string
 )
 
-// Initialize test "database"
-func init() {
-	galleries = make(map[string][]string)
-	galleries["cheems"] = append(galleries["cheems"], "https://media.discordapp.net/attachments/621023220249657345/867856538798784563/image0.jpg")
-	galleries["cheems"] = append(galleries["cheems"], "https://media.discordapp.net/attachments/879104636093624351/881341291156365353/image0.jpg")
-	galleries["molotov"] = append(galleries["molotov"], "https://media.discordapp.net/attachments/621023220249657345/880952883426758696/20210817_181220.jpg")
+type Gallery struct {
+	Images []string `firestore:"images"`
 }
 
 // Initialize rand (with current time)
@@ -111,37 +115,51 @@ func init() {
 		}
 		config[key] = val
 	}
-
-	s, err = discordgo.New("Bot " + config["botToken"])
-	if err != nil {
-		log.Fatal().Err(err).Msg("Invalid bot parameters")
-	}
 }
 
 func populateGalleryChoices() (options []*discordgo.ApplicationCommandOptionChoice) {
-	for k := range galleries {
+	galleries, err := firestoreClient.Collection("galleries").DocumentRefs(ctx).GetAll()
+	if err != nil {
+		log.Error().Err(err).Caller().Msg("Failed to get DocumentRefs from Firestore")
+	}
+	log.Debug().Msgf("Found %d galleries", len(galleries))
+	for _, v := range galleries {
+		// log.Debug().Msgf("Found gallery '%s'", v.ID)
 		options = append(options,
 			&discordgo.ApplicationCommandOptionChoice{
-				Name:  k,
-				Value: k,
+				Name:  v.ID,
+				Value: v.ID,
 			},
 		)
 	}
 	return options
 }
 
-func doesGalleryExist(galleryName string) (exists bool) {
-	_, exists = galleries[galleryName]
-	return
+func getGalleryDocRef(galleryName string) (docRef *firestore.DocumentRef) {
+	docRef = firestoreClient.Collection("galleries").Doc(galleryName)
+	return docRef
 }
 
-func getRandomImageFromGallery(i *discordgo.Interaction, gallery_name string) (contentValue string) {
-	exists := doesGalleryExist(gallery_name)
-	if exists {
-		length := len(galleries[gallery_name])
-		if length > 0 {
-			images := galleries[gallery_name]
-			numberOfImages := len(images)
+func getRandomImageFromGallery(i *discordgo.Interaction, galleryName string) (contentValue string) {
+	docRef := getGalleryDocRef(galleryName)
+	if docRef != nil {
+		docSnap, err := docRef.Get(ctx)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("DocumentSnapshot", docSnap).Msg("Failed to retrieve document contents")
+			contentValue = "Unable to get gallery contents :stop_sign:"
+			return contentValue
+		}
+		var gallery Gallery
+		err = docSnap.DataTo(&gallery)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("DocumentSnapshot", docSnap).Msg("Failed to retrieve document contents")
+			contentValue = "Unable to get gallery contents :stop_sign:"
+			return contentValue
+		}
+		images := gallery.Images
+		// log.Debug().Interface("gallery", gallery).Interface("images", images).Msg("")
+		numberOfImages := len(images)
+		if numberOfImages > 0 {
 			if numberOfImages == 1 {
 				contentValue = images[0]
 			} else {
@@ -160,12 +178,19 @@ func getRandomImageFromGallery(i *discordgo.Interaction, gallery_name string) (c
 }
 
 func getImageFromGallery(i *discordgo.Interaction, galleryName string, imageNum int) (contentValue string) {
-	exists := doesGalleryExist(galleryName)
-	if exists {
-		length := len(galleries[galleryName])
-		if length > 0 {
-			images := galleries[galleryName]
-			numberOfImages := len(images)
+	docRef := getGalleryDocRef(galleryName)
+	if docRef != nil {
+		docSnap, err := docRef.Get(ctx)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("DocumentSnapshot", docSnap).Msg("Failed to retrieve document contents")
+			contentValue = "Unable to get gallery contents :stop_sign:"
+			return contentValue
+		}
+		var gallery Gallery
+		docSnap.DataTo(&gallery)
+		images := gallery.Images
+		numberOfImages := len(images)
+		if numberOfImages > 0 {
 			if imageNum < 0 || imageNum >= numberOfImages {
 				if numberOfImages == 1 {
 					contentValue = "Invalid image number :stop_sign: (Only image number 0 is valid. Perhaps add more images to the gallery?)"
@@ -187,44 +212,57 @@ func getImageFromGallery(i *discordgo.Interaction, galleryName string, imageNum 
 }
 
 func createGallery(i *discordgo.Interaction, galleryName string) (contentValue string) {
-	exists := doesGalleryExist(galleryName)
-	if exists {
-		contentValue = "Gallery already exists :stop_sign:"
-		log.Debug().Msg("Attempted to create a gallery that already exists")
-	} else {
-		galleries[galleryName] = nil
+	docRef := getGalleryDocRef(galleryName)
+	_, err := docRef.Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		_, err := docRef.Set(ctx, Gallery{})
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docRef", docRef).Msg("Failed to create document")
+			contentValue = "Unable to create gallery :stop_sign:"
+			return contentValue
+		}
 		contentValue = fmt.Sprintf("Gallery '%s' created :white_check_mark:", galleryName)
 		log.Debug().Msgf("Created new gallery '%s'", galleryName)
+	} else if status.Code(err) == codes.OK {
+		contentValue = "Gallery already exists :stop_sign:"
+		log.Debug().Msg("Attempted to create a gallery that already exists")
 	}
 	return contentValue
 }
 
 func removeGallery(i *discordgo.Interaction, galleryName string) (contentValue string) {
-	exists := doesGalleryExist(galleryName)
-	if !exists {
-		contentValue = "Gallery does not exist :stop_sign:"
-		log.Warn().Msg("Attempted to remove non-existent gallery")
+	docRef := getGalleryDocRef(galleryName)
+	_, err := docRef.Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		log.Error().Err(err).Caller().Interface("interaction", i).Interface("docRef", docRef).Msg("Attempted to delete non-existent gallery")
+		contentValue = "Gallery does n ot exist :stop_sign:"
 	} else {
-		delete(galleries, galleryName)
+		_, err := docRef.Delete(ctx)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docRef", docRef).Msg("Failed to delete document")
+			contentValue = "Unable to remove gallery :stop_sign:"
+			return contentValue
+		}
 		contentValue = fmt.Sprintf("Gallery '%s' removed :white_check_mark:", galleryName)
-		log.Debug().Msgf("Removed gallery '%s", galleryName)
+		log.Debug().Msgf("Removed gallery '%s'", galleryName)
 	}
 	return contentValue
 }
 
 func updateCommands() {
-	commands[0].Options[0].Options[0].Choices = populateGalleryChoices() // gallery.random.galleryName.Choices
-	commands[0].Options[1].Options[0].Choices = populateGalleryChoices() // gallery.pick.galleryName.Choices
-	commands[0].Options[3].Options[0].Choices = populateGalleryChoices() // gallery.remove.galleryName.Choices
+	choices := populateGalleryChoices()
+	commands[0].Options[0].Options[0].Choices = choices // gallery.random.galleryName.Choices
+	commands[0].Options[1].Options[0].Choices = choices // gallery.pick.galleryName.Choices
+	commands[0].Options[3].Options[0].Choices = choices // gallery.remove.galleryName.Choices
 
 	for _, v := range commands {
 		// log.Debug().Interface("cmd", v).Msg("Attempting to create command")
-		cmd, err := s.ApplicationCommandCreate(s.State.User.ID, config["guildId"], v)
+		_, err := s.ApplicationCommandCreate(s.State.User.ID, config["guildId"], v)
 		if err != nil {
-			log.Error().Err(err).Msgf("Cannot (re?)create '%s' command", v.Name)
-		} else {
-			log.Debug().Msgf("Successfully (re?)created '%s' command", cmd.Name)
-		}
+			log.Error().Err(err).Caller().Msgf("Cannot (re?)create '%s' command", v.Name)
+		} /* else {
+			log.Debug().Msgf("Successfully (re)created '%s' command", cmd.Name)
+		} */
 	}
 }
 
@@ -339,26 +377,37 @@ var (
 	}
 )
 
-func init() {
+func main() {
+	var err error
+
+	firestoreClient, err = firestore.NewClient(ctx, config["projectId"], option.WithCredentialsFile(config["googleApplicationCredentialsPath"]))
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create Firestore client")
+	}
+	defer firestoreClient.Close()
+
+	s, err = discordgo.New("Bot " + config["botToken"])
+	if err != nil {
+		log.Fatal().Err(err).Msg("Invalid bot parameters")
+	}
+
 	s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
 			h(s, i)
 		}
 	})
-}
 
-func main() {
 	s.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		log.Info().Msg("Bot is up!")
 	})
-	err := s.Open()
+	err = s.Open()
 	if err != nil {
 		log.Fatal().Err(err).Msg("Cannot open the session")
 	}
 
-	updateCommands()
-
 	defer s.Close()
+
+	updateCommands()
 
 	stop := make(chan os.Signal)
 	signal.Notify(stop, os.Interrupt)
