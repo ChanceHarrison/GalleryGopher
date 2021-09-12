@@ -320,7 +320,7 @@ func removeGalleryPrompt(i *discordgo.Interaction) (data discordgo.InteractionRe
 		return data
 	} else {
 		embed = discordgo.MessageEmbed{
-			Description: fmt.Sprintf("Are you sure you want to remove the gallery `%s`? :thinking:\n**This action CANNOT be undone**", galleryName),
+			Description: "Are you sure you want to remove the following gallery? :thinking:\n**This action CANNOT be undone**",
 			Color:       0x5865f2,
 			Footer: &discordgo.MessageEmbedFooter{
 				Text: galleryName,
@@ -512,15 +512,11 @@ var (
 	componentHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
 		"gallery_remove_yes": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			var data discordgo.InteractionResponseData
-			galleryName := i.Message.Embeds[0].Footer.Text // Should verify that the embed hasn't been deleted by the user who invoked the command
+			galleryName := i.Message.Embeds[0].Footer.Text
 			data = removeGallery(i.Interaction, galleryName)
 
-			updatedMessage := discordgo.NewMessageEdit(i.Message.ChannelID, i.Message.ID)
-			updatedMessage.Components = nil
-			s.ChannelMessageEditComplex(updatedMessage)
-
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Type: discordgo.InteractionResponseUpdateMessage,
 				Data: &data,
 			})
 		},
@@ -530,12 +526,8 @@ var (
 				Description: fmt.Sprintf("Cancelled removal of gallery `%s`.", galleryName),
 			}
 
-			updatedMessage := discordgo.NewMessageEdit(i.Message.ChannelID, i.Message.ID)
-			updatedMessage.Components = nil
-			s.ChannelMessageEditComplex(updatedMessage)
-
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Type: discordgo.InteractionResponseUpdateMessage,
 				Data: &discordgo.InteractionResponseData{
 					Embeds: []*discordgo.MessageEmbed{&embed},
 				},
@@ -565,7 +557,6 @@ func main() {
 				h(s, i)
 			}
 		case discordgo.InteractionMessageComponent:
-
 			if h, ok := componentHandlers[i.MessageComponentData().CustomID]; ok {
 				h(s, i)
 			}
