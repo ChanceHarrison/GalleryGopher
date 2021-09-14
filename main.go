@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -33,7 +35,7 @@ var (
 )
 
 type Gallery struct {
-	Images []string `firestore:"images"`
+	Images []map[string]string `firestore:"images"`
 }
 
 // Initialize rand (with current time)
@@ -150,7 +152,7 @@ func getRandomImageFromGallery(i *discordgo.Interaction) (data discordgo.Interac
 	if docRef != nil {
 		docSnap, err := docRef.Get(ctx)
 		if err != nil {
-			log.Error().Err(err).Caller().Interface("interaction", i).Interface("DocumentSnapshot", docSnap).Msg("Failed to retrieve document contents")
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docSnap", docSnap).Msg("Failed to retrieve document contents")
 			embed = discordgo.MessageEmbed{
 				Description: "Unable to get gallery contents :stop_sign:",
 				Color:       0xf04747,
@@ -161,7 +163,7 @@ func getRandomImageFromGallery(i *discordgo.Interaction) (data discordgo.Interac
 		var gallery Gallery
 		err = docSnap.DataTo(&gallery)
 		if err != nil {
-			log.Error().Err(err).Caller().Interface("interaction", i).Interface("DocumentSnapshot", docSnap).Msg("Failed to retrieve document contents")
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docSnap", docSnap).Msg("Failed to retrieve document contents")
 			embed = discordgo.MessageEmbed{
 				Description: "Unable to get gallery contents :stop_sign:",
 				Color:       0xf04747,
@@ -176,74 +178,20 @@ func getRandomImageFromGallery(i *discordgo.Interaction) (data discordgo.Interac
 			if numberOfImages == 1 {
 				embed = discordgo.MessageEmbed{
 					Image: &discordgo.MessageEmbedImage{
-						URL: images[0],
+						URL: images[0]["imageUrl"],
+					},
+					Footer: &discordgo.MessageEmbedFooter{
+						Text: fmt.Sprintf("Image: %d of %d | Gallery: %s", 0, numberOfImages-1, galleryName),
 					},
 				}
 			} else {
 				chosenImageInt := rand.Intn(numberOfImages)
 				embed = discordgo.MessageEmbed{
 					Image: &discordgo.MessageEmbedImage{
-						URL: images[chosenImageInt],
+						URL: images[chosenImageInt]["imageUrl"],
 					},
-				}
-			}
-		} else {
-			embed = discordgo.MessageEmbed{
-				Description: "Gallery is empty :stop_sign:",
-				Color:       0xf04747,
-			}
-			log.Debug().Msg("Attempted image retrieval from empty gallery")
-		}
-	} else {
-		embed = discordgo.MessageEmbed{
-			Description: "Gallery does not exist :stop_sign:",
-			Color:       0xf04747,
-		}
-		log.Warn().Interface("interaction", i).Msg("Attempted image retrieval from non-existent gallery")
-	}
-	return data
-}
-
-func getImageFromGallery(i *discordgo.Interaction) (data discordgo.InteractionResponseData) {
-	var embed discordgo.MessageEmbed
-
-	command := i.ApplicationCommandData().Options[0]
-	galleryName := command.Options[0].StringValue()
-	imageNum := int(command.Options[1].IntValue())
-
-	docRef := getGalleryDocRef(galleryName)
-	if docRef != nil {
-		docSnap, err := docRef.Get(ctx)
-		if err != nil {
-			log.Error().Err(err).Caller().Interface("interaction", i).Interface("DocumentSnapshot", docSnap).Msg("Failed to retrieve document contents")
-			embed = discordgo.MessageEmbed{
-				Description: "Unable to get gallery contents :stop_sign:",
-				Color:       0xf04747,
-			}
-			data.Embeds = []*discordgo.MessageEmbed{&embed}
-			return data
-		}
-		var gallery Gallery
-		docSnap.DataTo(&gallery)
-		images := gallery.Images
-		numberOfImages := len(images)
-		if numberOfImages > 0 {
-			if imageNum < 0 || imageNum >= numberOfImages {
-				if numberOfImages == 1 {
-					embed = discordgo.MessageEmbed{
-						Description: "Invalid image number :stop_sign:\n(Only image number 0 is valid. Perhaps add more images to the gallery?)",
-						Color:       0xf04747,
-					}
-				} else {
-					embed = discordgo.MessageEmbed{
-						Description: fmt.Sprintf("Invalid image number :stop_sign: (Valid image numbers include 0 through %d inclusive.)", numberOfImages-1),
-						Color:       0xf04747,
-					}
-				}
-			} else {
-				embed = discordgo.MessageEmbed{
-					Image: &discordgo.MessageEmbedImage{
-						URL: images[imageNum],
+					Footer: &discordgo.MessageEmbedFooter{
+						Text: fmt.Sprintf("Image: %d of %d | Gallery: %s", chosenImageInt, numberOfImages-1, galleryName),
 					},
 				}
 			}
@@ -263,6 +211,342 @@ func getImageFromGallery(i *discordgo.Interaction) (data discordgo.InteractionRe
 	}
 	data.Embeds = []*discordgo.MessageEmbed{&embed}
 	return data
+}
+
+func getImageFromGallery(i *discordgo.Interaction) (data discordgo.InteractionResponseData) {
+	var embed discordgo.MessageEmbed
+
+	command := i.ApplicationCommandData().Options[0]
+	galleryName := command.Options[0].StringValue()
+	imageNum := int(command.Options[1].IntValue())
+
+	docRef := getGalleryDocRef(galleryName)
+	if docRef != nil {
+		docSnap, err := docRef.Get(ctx)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docSnap", docSnap).Msg("Failed to retrieve document contents")
+			embed = discordgo.MessageEmbed{
+				Description: "Unable to get gallery contents :stop_sign:",
+				Color:       0xf04747,
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			return data
+		}
+		var gallery Gallery
+		err = docSnap.DataTo(&gallery)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docSnap", docSnap).Msg("Failed to retrieve document contents")
+			embed = discordgo.MessageEmbed{
+				Description: "Unable to get gallery contents :stop_sign:",
+				Color:       0xf04747,
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			return data
+		}
+		images := gallery.Images
+		numberOfImages := len(images)
+		if numberOfImages > 0 {
+			if imageNum < 0 || imageNum >= numberOfImages {
+				if numberOfImages == 1 {
+					embed = discordgo.MessageEmbed{
+						Description: "Invalid image number :stop_sign:\n(Only image number 0 is valid. Perhaps add more images to the gallery?)",
+						Color:       0xf04747,
+					}
+				} else {
+					embed = discordgo.MessageEmbed{
+						Description: fmt.Sprintf("Invalid image number :stop_sign: (Valid image numbers include 0 through %d inclusive.)", numberOfImages-1),
+						Color:       0xf04747,
+					}
+				}
+			} else {
+				embed = discordgo.MessageEmbed{
+					Image: &discordgo.MessageEmbedImage{
+						URL: images[imageNum]["imageUrl"],
+					},
+					Footer: &discordgo.MessageEmbedFooter{
+						Text: fmt.Sprintf("Image: %d of %d | Gallery: %s", imageNum, numberOfImages-1, galleryName),
+					},
+				}
+			}
+		} else {
+			embed = discordgo.MessageEmbed{
+				Description: "Gallery is empty :stop_sign:",
+				Color:       0xf04747,
+			}
+			log.Debug().Msg("Attempted image retrieval from empty gallery")
+		}
+	} else {
+		embed = discordgo.MessageEmbed{
+			Description: "Gallery does not exist :stop_sign:",
+			Color:       0xf04747,
+		}
+		log.Warn().Interface("interaction", i).Msg("Attempted image retrieval from non-existent gallery")
+	}
+	data.Embeds = []*discordgo.MessageEmbed{&embed}
+	return data
+}
+
+func addImageToGallery(i *discordgo.Interaction) (data discordgo.InteractionResponseData) {
+	var embed discordgo.MessageEmbed
+
+	command := i.ApplicationCommandData().Options[0]
+	galleryName := command.Options[0].StringValue()
+	imageUrl := command.Options[1].StringValue()
+	timestamp := fmt.Sprint(time.Now().Unix())
+	authorId := i.Member.User.ID
+
+	docRef := getGalleryDocRef(galleryName)
+	if docRef != nil {
+		docSnap, err := docRef.Get(ctx)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docSnap", docSnap).Msg("Failed to retrieve document contents")
+			embed = discordgo.MessageEmbed{
+				Description: "Unable to get gallery contents :stop_sign:",
+				Color:       0xf04747,
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			return data
+		}
+		var gallery Gallery
+		err = docSnap.DataTo(&gallery)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docSnap", docSnap).Msg("Failed to retrieve document contents")
+			embed = discordgo.MessageEmbed{
+				Description: "Unable to get gallery contents :stop_sign:",
+				Color:       0xf04747,
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			return data
+		}
+		// TODO: Validate the given imageUrl (length, format, expected params, etc.)
+		gallery.Images = append(gallery.Images, map[string]string{
+			"imageUrl":  imageUrl,
+			"timestamp": timestamp,
+			"authorId":  authorId,
+		})
+		_, err = docRef.Set(ctx, gallery)
+		if err != nil {
+			log.Error().Err(err).Caller().Interface("interaction", i).Interface("DocRef", docRef).Msg("Failed to write document contents")
+			embed = discordgo.MessageEmbed{
+				Description: "Unable to modify gallery contents :stop_sign:",
+				Color:       0xf04747,
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			return data
+		} else {
+			log.Debug().Str("imageUrl", imageUrl).Str("user", i.Member.User.Username).Str("gallery", galleryName).Msg("Image added to gallery")
+		}
+		embed = discordgo.MessageEmbed{
+			Description: fmt.Sprintf("Image `%d` created!", len(gallery.Images)-1),
+			Fields: []*discordgo.MessageEmbedField{
+				{
+					Name:   "In gallery",
+					Value:  fmt.Sprintf("`%s`", galleryName),
+					Inline: true,
+				},
+				{
+					Name:   "Added by",
+					Value:  fmt.Sprintf("<@%s>", authorId),
+					Inline: true,
+				},
+				{
+					Name:   "Created at",
+					Value:  fmt.Sprintf("<t:%s>", timestamp),
+					Inline: true,
+				},
+			},
+		}
+	} else {
+		embed = discordgo.MessageEmbed{
+			Description: "Gallery does not exist :stop_sign:",
+			Color:       0xf04747,
+		}
+		log.Warn().Interface("interaction", i).Msg("Attempted image retrieval from non-existent gallery")
+	}
+	data.Embeds = []*discordgo.MessageEmbed{&embed}
+	return data
+}
+
+func removeImagePrompt(i *discordgo.Interaction) (data discordgo.InteractionResponseData) {
+	var embed discordgo.MessageEmbed
+	var messageComponents []discordgo.MessageComponent
+
+	command := i.ApplicationCommandData().Options[0]
+	galleryName := command.Options[0].StringValue()
+	imageNum := int(command.Options[1].IntValue())
+
+	docRef := getGalleryDocRef(galleryName)
+	docSnap, err := docRef.Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		log.Error().Err(err).Caller().Interface("interaction", i).Interface("docRef", docRef).Msg("Attempted to delete image from non-existent gallery")
+		embed = discordgo.MessageEmbed{
+			Description: "Gallery does not exist :stop_sign:",
+			Color:       0xf04747,
+		}
+		data.Embeds = []*discordgo.MessageEmbed{&embed}
+		return data
+	}
+	var gallery Gallery
+	err = docSnap.DataTo(&gallery)
+	if err != nil {
+		log.Error().Err(err).Caller().Interface("interaction", i).Interface("docSnap", docSnap).Msg("Failed to retrieve document contents")
+		embed = discordgo.MessageEmbed{
+			Description: "Unable to get gallery contents :stop_sign:",
+			Color:       0xf04747,
+		}
+		data.Embeds = []*discordgo.MessageEmbed{&embed}
+		return data
+	}
+	images := gallery.Images
+	numberOfImages := len(images)
+	if numberOfImages > 0 {
+		if imageNum < 0 || imageNum >= numberOfImages {
+			if numberOfImages == 1 {
+				embed = discordgo.MessageEmbed{
+					Description: "Invalid image number :stop_sign: (Only image number 0 exists.)",
+					Color:       0xf04747,
+				}
+			} else {
+				embed = discordgo.MessageEmbed{
+					Description: fmt.Sprintf("Invalid image number :stop_sign: (Valid image numbers include 0 through %d inclusive.)", numberOfImages-1),
+					Color:       0xf04747,
+				}
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			return data
+		} else {
+			embed = discordgo.MessageEmbed{
+				Description: "Are you sure you want to delete the below image? :thinking:",
+				Color:       0x5865f2,
+				Image: &discordgo.MessageEmbedImage{
+					URL: gallery.Images[imageNum]["imageUrl"],
+				},
+				Fields: []*discordgo.MessageEmbedField{
+					{
+						Name:   "In gallery",
+						Value:  fmt.Sprintf("`%s`", galleryName),
+						Inline: true,
+					},
+					{
+						Name:   "Image number",
+						Value:  fmt.Sprint(imageNum),
+						Inline: true,
+					},
+					{
+						Name:   "Added by",
+						Value:  fmt.Sprintf("<@%s>", gallery.Images[imageNum]["authorId"]),
+						Inline: true,
+					},
+					{
+						Name:   "Created at",
+						Value:  fmt.Sprintf("<t:%s>", gallery.Images[imageNum]["timestamp"]),
+						Inline: true,
+					},
+				},
+			}
+			messageComponents = []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.Button{
+							Label:    "Yes, delete",
+							Style:    discordgo.DangerButton,
+							CustomID: "image_delete_yes",
+						},
+						discordgo.Button{
+							Label:    "No, cancel",
+							Style:    discordgo.SecondaryButton,
+							CustomID: "image_delete_no",
+						},
+					},
+				},
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			data.Components = messageComponents
+			return data
+		}
+	} else {
+		embed = discordgo.MessageEmbed{
+			Description: "Gallery does not exist :stop_sign:",
+			Color:       0xf04747,
+		}
+		log.Warn().Interface("interaction", i).Msg("Attempted image retrieval from non-existent gallery")
+		data.Embeds = []*discordgo.MessageEmbed{&embed}
+		return data
+	}
+}
+
+func removeImage(i *discordgo.Interaction, galleryName string, imageNum int) (data discordgo.InteractionResponseData) {
+	var embed discordgo.MessageEmbed
+
+	docRef := getGalleryDocRef(galleryName)
+	docSnap, err := docRef.Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		log.Error().Err(err).Caller().Interface("interaction", i).Interface("docRef", docRef).Msg("Attempted to remove image from non-existent gallery")
+		embed = discordgo.MessageEmbed{
+			Description: "Gallery does not exist :stop_sign:",
+			Color:       0xf04747,
+		}
+		data.Embeds = []*discordgo.MessageEmbed{&embed}
+		return data
+	}
+	var gallery Gallery
+	err = docSnap.DataTo(&gallery)
+	if err != nil {
+		log.Error().Err(err).Caller().Interface("interaction", i).Interface("docSnap", docSnap).Msg("Failed to retrieve document contents")
+		embed = discordgo.MessageEmbed{
+			Description: "Unable to get gallery contents :stop_sign:",
+			Color:       0xf04747,
+		}
+		data.Embeds = []*discordgo.MessageEmbed{&embed}
+		return data
+	}
+	images := gallery.Images
+	numberOfImages := len(images)
+	if numberOfImages > 0 {
+		if imageNum < 0 || imageNum >= numberOfImages {
+			if numberOfImages == 1 {
+				embed = discordgo.MessageEmbed{
+					Description: "Invalid image number :stop_sign: (Only image number 0 exists.)",
+					Color:       0xf04747,
+				}
+			} else {
+				embed = discordgo.MessageEmbed{
+					Description: fmt.Sprintf("Invalid image number :stop_sign: (Valid image numbers include 0 through %d inclusive.)", numberOfImages-1),
+					Color:       0xf04747,
+				}
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			return data
+		} else {
+			gallery.Images = append(gallery.Images[:imageNum], gallery.Images[imageNum+1:]...)
+			_, err = docRef.Set(ctx, gallery)
+			if err != nil {
+				log.Error().Err(err).Caller().Interface("interaction", i).Interface("DocRef", docRef).Msg("Failed to write document contents")
+				embed = discordgo.MessageEmbed{
+					Description: "Unable to modify gallery contents :stop_sign:",
+					Color:       0xf04747,
+				}
+				data.Embeds = []*discordgo.MessageEmbed{&embed}
+				return data
+			} else {
+				log.Debug().Str("imageNum", fmt.Sprint(imageNum)).Str("gallery", galleryName).Msg("Image removed from gallery")
+			}
+			embed = discordgo.MessageEmbed{
+				Description: fmt.Sprintf("Image `%d` removed from `%s` :white_check_mark:", imageNum, galleryName),
+				Color:       0x43b581,
+			}
+			data.Embeds = []*discordgo.MessageEmbed{&embed}
+			return data
+		}
+	} else {
+		embed = discordgo.MessageEmbed{
+			Description: "Gallery does not exist :stop_sign:",
+			Color:       0xf04747,
+		}
+		log.Warn().Interface("interaction", i).Msg("Attempted image removal from non-existent gallery")
+		data.Embeds = []*discordgo.MessageEmbed{&embed}
+		return data
+	}
 }
 
 func createGallery(i *discordgo.Interaction) (data discordgo.InteractionResponseData) {
@@ -301,7 +585,7 @@ func createGallery(i *discordgo.Interaction) (data discordgo.InteractionResponse
 	return data
 }
 
-func removeGalleryPrompt(i *discordgo.Interaction) (data discordgo.InteractionResponseData) {
+func deleteGalleryPrompt(i *discordgo.Interaction) (data discordgo.InteractionResponseData) {
 	var embed discordgo.MessageEmbed
 	var messageComponents []discordgo.MessageComponent
 
@@ -318,37 +602,39 @@ func removeGalleryPrompt(i *discordgo.Interaction) (data discordgo.InteractionRe
 		}
 		data.Embeds = []*discordgo.MessageEmbed{&embed}
 		return data
-	} else {
-		embed = discordgo.MessageEmbed{
-			Description: "Are you sure you want to remove the following gallery? :thinking:\n**This action CANNOT be undone**",
-			Color:       0x5865f2,
-			Footer: &discordgo.MessageEmbedFooter{
-				Text: galleryName,
+	}
+	embed = discordgo.MessageEmbed{
+		Description: "Are you sure you want to delete the following gallery? :thinking:",
+		Color:       0x5865f2,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:  "Gallery",
+				Value: fmt.Sprintf("`%s`", galleryName),
 			},
-		}
-		messageComponents = []discordgo.MessageComponent{
-			discordgo.ActionsRow{
-				Components: []discordgo.MessageComponent{
-					discordgo.Button{
-						Label:    "Yes, remove",
-						Style:    discordgo.DangerButton,
-						CustomID: "gallery_remove_yes",
-					},
-					discordgo.Button{
-						Label:    "No, cancel",
-						Style:    discordgo.SecondaryButton,
-						CustomID: "gallery_remove_no",
-					},
+		},
+	}
+	messageComponents = []discordgo.MessageComponent{
+		discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{
+				discordgo.Button{
+					Label:    "Yes, delete",
+					Style:    discordgo.DangerButton,
+					CustomID: "gallery_delete_yes",
+				},
+				discordgo.Button{
+					Label:    "No, cancel",
+					Style:    discordgo.SecondaryButton,
+					CustomID: "gallery_delete_no",
 				},
 			},
-		}
-		data.Embeds = []*discordgo.MessageEmbed{&embed}
-		data.Components = messageComponents
-		return data
+		},
 	}
+	data.Embeds = []*discordgo.MessageEmbed{&embed}
+	data.Components = messageComponents
+	return data
 }
 
-func removeGallery(i *discordgo.Interaction, galleryName string) (data discordgo.InteractionResponseData) {
+func deleteGallery(i *discordgo.Interaction, galleryName string) (data discordgo.InteractionResponseData) {
 	var embed discordgo.MessageEmbed
 
 	docRef := getGalleryDocRef(galleryName)
@@ -361,33 +647,36 @@ func removeGallery(i *discordgo.Interaction, galleryName string) (data discordgo
 		}
 		data.Embeds = []*discordgo.MessageEmbed{&embed}
 		return data
-	} else {
-		_, err := docRef.Delete(ctx)
-		if err != nil {
-			log.Error().Err(err).Caller().Interface("interaction", i).Interface("docRef", docRef).Msg("Failed to delete document")
-			embed = discordgo.MessageEmbed{
-				Description: "Unable to remove gallery :stop_sign:",
-				Color:       0xf04747,
-			}
-			data.Embeds = []*discordgo.MessageEmbed{&embed}
-			return data
-		}
+	}
+	_, err = docRef.Delete(ctx)
+	if err != nil {
+		log.Error().Err(err).Caller().Interface("interaction", i).Interface("docRef", docRef).Msg("Failed to delete document")
 		embed = discordgo.MessageEmbed{
-			Description: fmt.Sprintf("Gallery `%s` removed :white_check_mark:", galleryName),
-			Color:       0x43b581,
+			Description: "Unable to delete gallery :stop_sign:",
+			Color:       0xf04747,
 		}
 		data.Embeds = []*discordgo.MessageEmbed{&embed}
-		log.Debug().Msgf("Removed gallery '%s'", galleryName)
+		return data
 	}
+	embed = discordgo.MessageEmbed{
+		Description: fmt.Sprintf("Gallery `%s` deleted :white_check_mark:", galleryName),
+		Color:       0x43b581,
+	}
+	data.Embeds = []*discordgo.MessageEmbed{&embed}
+	log.Debug().Msgf("Deleted gallery '%s'", galleryName)
+	updateCommands()
 	return data
 }
 
 // Adding/removing galleries has side-effects for the pre-populated galleryName choices
 func updateCommands() {
 	choices := populateGalleryChoices()
+	// Any changes to command order need to be reflected here
 	commands[0].Options[0].Options[0].Choices = choices // gallery.random.galleryName.Choices
 	commands[0].Options[1].Options[0].Choices = choices // gallery.pick.galleryName.Choices
-	commands[0].Options[3].Options[0].Choices = choices // gallery.remove.galleryName.Choices
+	commands[0].Options[2].Options[0].Choices = choices // gallery.add_image.galleryName.Choices
+	commands[0].Options[3].Options[0].Choices = choices // gallery.remove_image.galleryName.Choices
+	commands[0].Options[4].Options[0].Choices = choices // gallery.delete.galleryName.Choices
 
 	for _, v := range commands {
 		// log.Debug().Interface("cmd", v).Msg("Attempting to create command")
@@ -439,6 +728,57 @@ var (
 					},
 				},
 				{
+					Name:        "add_image",
+					Description: "Add the specified image to the chosen gallery",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Name:        "gallery_name",
+							Description: "The gallery to add an image to",
+							Type:        discordgo.ApplicationCommandOptionString,
+							Required:    true,
+						},
+						{
+							Name:        "image_link",
+							Description: "The URL pointing to the image you wish to add",
+							Type:        discordgo.ApplicationCommandOptionString,
+							Required:    true,
+						},
+					},
+				},
+				{
+					Name:        "remove_image",
+					Description: "Remove the specified image from the chosen gallery",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Name:        "gallery_name",
+							Description: "The gallery to remove an image from",
+							Type:        discordgo.ApplicationCommandOptionString,
+							Required:    true,
+						},
+						{
+							Name:        "image_number",
+							Description: "The image you wish to remove",
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Required:    true,
+						},
+					},
+				},
+				{
+					Name:        "delete",
+					Description: "Delete an existing gallery",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Name:        "gallery_name",
+							Description: "The name of the gallery to be deleted",
+							Type:        discordgo.ApplicationCommandOptionString,
+							Required:    true,
+						},
+					},
+				},
+				{
 					Name:        "create",
 					Description: "Create a new gallery",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -446,19 +786,6 @@ var (
 						{
 							Name:        "gallery_name",
 							Description: "The name of the gallery to be created",
-							Type:        discordgo.ApplicationCommandOptionString,
-							Required:    true,
-						},
-					},
-				},
-				{
-					Name:        "remove",
-					Description: "Remove an existing gallery",
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Options: []*discordgo.ApplicationCommandOption{
-						{
-							Name:        "gallery_name",
-							Description: "The name of the gallery to be removed",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    true,
 						},
@@ -481,10 +808,14 @@ var (
 					data = getRandomImageFromGallery(i.Interaction)
 				case "pick":
 					data = getImageFromGallery(i.Interaction)
+				case "add_image":
+					data = addImageToGallery(i.Interaction)
+				case "remove_image":
+					data = removeImagePrompt(i.Interaction)
 				case "create":
 					data = createGallery(i.Interaction)
-				case "remove":
-					data = removeGalleryPrompt(i.Interaction)
+				case "delete":
+					data = deleteGalleryPrompt(i.Interaction)
 				default:
 					embed := discordgo.MessageEmbed{
 						Description: "Invalid subcommand :stop_sign:",
@@ -502,36 +833,86 @@ var (
 				log.Warn().Interface("interaction", i.Interaction).Msg("Unexpected interaction type")
 			}
 
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &data,
 			})
+			if err != nil {
+				log.Error().Err(err).Interface("interaction", i.Interaction).Msg("Failure in responding to interaction")
+			}
 		},
 	}
 
 	componentHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
-		"gallery_remove_yes": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		"gallery_delete_yes": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			var data discordgo.InteractionResponseData
-			galleryName := i.Message.Embeds[0].Footer.Text
-			data = removeGallery(i.Interaction, galleryName)
+			galleryName := i.Message.Embeds[0].Fields[0].Value
+			galleryName = strings.Trim(galleryName, "`")
+			data = deleteGallery(i.Interaction, galleryName)
+			data.Components = []discordgo.MessageComponent{}
 
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseUpdateMessage,
 				Data: &data,
 			})
+			if err != nil {
+				log.Error().Err(err).Interface("interaction", i.Interaction).Msg("Failure in responding to interaction")
+			}
 		},
-		"gallery_remove_no": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			galleryName := i.Message.Embeds[0].Footer.Text
+		"gallery_delete_no": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			galleryName := i.Message.Embeds[0].Fields[0].Value
+			galleryName = strings.Trim(galleryName, "`")
 			embed := discordgo.MessageEmbed{
 				Description: fmt.Sprintf("Cancelled removal of gallery `%s`.", galleryName),
 			}
 
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseUpdateMessage,
 				Data: &discordgo.InteractionResponseData{
-					Embeds: []*discordgo.MessageEmbed{&embed},
+					Embeds:     []*discordgo.MessageEmbed{&embed},
+					Components: []discordgo.MessageComponent{},
 				},
 			})
+			if err != nil {
+				log.Error().Err(err).Interface("interaction", i.Interaction).Msg("Failure in responding to interaction")
+			}
+		},
+		"image_delete_yes": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			var data discordgo.InteractionResponseData
+			galleryName := i.Message.Embeds[0].Fields[0].Value
+			galleryName = strings.Trim(galleryName, "`")
+			imageNumStr := i.Message.Embeds[0].Fields[1].Value
+			imageNum, _ := strconv.Atoi(imageNumStr)
+
+			data = removeImage(i.Interaction, galleryName, imageNum)
+			data.Components = []discordgo.MessageComponent{}
+
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &data,
+			})
+			if err != nil {
+				log.Error().Err(err).Interface("interaction", i.Interaction).Msg("Failure in responding to interaction")
+			}
+		},
+		"image_delete_no": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			galleryName := i.Message.Embeds[0].Fields[0].Value
+			galleryName = strings.Trim(galleryName, "`")
+			imageNum := i.Message.Embeds[0].Fields[1].Value
+			embed := discordgo.MessageEmbed{
+				Description: fmt.Sprintf("Cancelled removal of image `%s` from gallery `%s`.", imageNum, galleryName),
+			}
+
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{
+					Embeds:     []*discordgo.MessageEmbed{&embed},
+					Components: []discordgo.MessageComponent{},
+				},
+			})
+			if err != nil {
+				log.Error().Err(err).Interface("interaction", i.Interaction).Msg("Failure in responding to interaction")
+			}
 		},
 	}
 )
